@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 import json
 import math
@@ -34,6 +34,16 @@ def _int(value: Any) -> int | None:
 
 def _str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _date(value: Any) -> date | None:
+    """Parse the date part of an ISO timestamp such as "2026-03-05T09:17:41.69"."""
+    if not isinstance(value, str) or len(value) < 10:
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
 
 
 def _epoch_ms(value: Any) -> datetime | None:
@@ -92,6 +102,8 @@ class StationInfo:
     pv_capacity_kw: float | None
     time_zone: str | None
     permissions: frozenset[str]
+    # Statistics only exist from here on; see `async_get_statistics`.
+    created: date | None = None
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> StationInfo:
@@ -108,6 +120,7 @@ class StationInfo:
             permissions=frozenset(
                 p for p in data.get("permissions") or [] if isinstance(p, str)
             ),
+            created=_date(data.get("createTime")),
         )
 
     @property

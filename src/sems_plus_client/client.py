@@ -345,7 +345,11 @@ class SemsPlusClient:
     async def async_get_statistics(
         self, station_id: str, dimension: str, start: date, end: date
     ) -> StationStatistics:
-        """Energy statistics per `dimension` ("day", "month", "year") over a range."""
+        """Energy statistics per `dimension` ("day", "month", "year") over a range.
+
+        A range spanning more than one calendar year comes back as all zeros,
+        so request lifetime totals one year at a time.
+        """
         data = await self._async_request(
             "POST",
             "/sems-plant/api/stations/statistics",

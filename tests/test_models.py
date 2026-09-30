@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -95,6 +95,7 @@ def test_station_info_grid_status(
         "name": "Test",
         "status": "1",
         "permissions": ["INVERTER_REMOTE"],
+        "createTime": "2026-03-05T09:17:41.69",
     }
     if grid_status is not None:
         data["gridStatus"] = grid_status
@@ -103,6 +104,7 @@ def test_station_info_grid_status(
 
     assert info.on_grid is on_grid
     assert info.status == 1
+    assert info.created == date(2026, 3, 5)
     assert info.can_control
 
 

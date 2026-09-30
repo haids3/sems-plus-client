@@ -212,3 +212,22 @@ async def test_set_function_values_payload(
         "deviceName": "All-in-One 1",
         "virtualSn": "SN1",
     }
+
+
+async def test_battery_functions_request(
+    session: FakeSession, client: SemsPlusClient
+) -> None:
+    url = API + "/sems-remote/api/v2/address/remote/getDeviceFunctionTabMenus"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add("POST", url, _ok({"functionMenus": {"children": []}}))
+
+    assert await client.async_get_battery_functions("SN1", "1") == {
+        "functionMenus": {"children": []}
+    }
+    (request,) = session.calls_to("POST", url)
+    assert request.json == {
+        "batIndex": "1",
+        "menuCode": 1,
+        "module": "GENERAL_FUNCTIONS",
+        "sn": "SN1",
+    }

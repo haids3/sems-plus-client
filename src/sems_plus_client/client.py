@@ -409,6 +409,26 @@ class SemsPlusClient:
         )
         return data if isinstance(data, dict) else {}
 
+    async def async_get_battery_functions(
+        self, sn: str, battery_index: str
+    ) -> dict[str, Any]:
+        """The battery system's general functions (immediate charging, ...).
+
+        These are not part of the control tree; `battery_index` is a battery
+        system's `index` from `async_get_battery_systems`.
+        """
+        data = await self._async_request(
+            "POST",
+            "/sems-remote/api/v2/address/remote/getDeviceFunctionTabMenus",
+            body={
+                "batIndex": battery_index,
+                "menuCode": 1,
+                "module": "GENERAL_FUNCTIONS",
+                "sn": sn,
+            },
+        )
+        return data if isinstance(data, dict) else {}
+
     async def async_get_function_values(
         self, sn: str, functions: dict[str, str]
     ) -> dict[str, float | None]:

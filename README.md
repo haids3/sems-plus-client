@@ -35,7 +35,7 @@ client for the time the API asked for.
 | devices | `async_get_devices`, `async_get_telemetry`, `async_get_counters`, `async_get_battery_systems` |
 | energy | `async_get_statistics`, `async_get_currency` |
 | alarms | `async_get_alarm_counts`, `async_get_alarms` |
-| remote control | `async_get_control_tree`, `async_get_function_values`, `async_set_function_values`, `find_control_functions` |
+| remote control | `async_get_control_tree`, `async_get_battery_functions`, `async_get_function_values`, `async_set_function_values`, `find_control_functions` |
 
 Telemetry and counters come back keyed by SEMS+'s own factor codes (`pAc`,
 `MPPT-1:Vpv`, `soc`, `proPvStatsToday`, ...) rather than renamed. A factor the

@@ -555,3 +555,157 @@ class WorkModeInfo:
         return cls(
             version=_str(data.get("workMode")), arm_version=_str(data.get("arm"))
         )
+
+
+# `INVCurrentWorkMode`, the mode the inverter is running in (the web's table).
+# Unknown values display as self use there.
+WORK_MODES: dict[int, str] = {
+    -1: "ai",
+    1: "self_use",
+    2: "pv_priority_charging",
+    3: "pv_priority_export",
+    4: "priority_import_power",
+    5: "priority_export_power",
+    6: "energy_saving",
+    7: "off_grid",
+    8: "battery_standby",
+    9: "import",
+    10: "export",
+    11: "battery_charging",
+    12: "battery_discharging",
+    100: "backup",
+    101: "tou",
+    102: "tou",
+    103: "delayed_charge",
+    104: "delayed_charge",
+    105: "peak_shaving",
+    106: "peak_shaving",
+    107: "pv_priority_export_power",
+    255: "forced_shutdown_standby",
+}
+
+# Weekday-enable word of a TOU slot.
+TOU_SLOT_ON = 249
+TOU_SLOT_OFF = 6
+
+
+@dataclass(frozen=True, slots=True)
+class TouSlot:
+    """One time-of-use slot from `remote/get` (`TOU1` ... `TOU12`).
+
+    `power` is per-mille of rated power on work-mode versions 2 and 3:
+    positive discharges, negative charges. `weekdays` count from 0 = Sunday,
+    `months` from 0 = January.
+    """
+
+    index: int
+    start: str
+    end: str
+    week_enable: int
+    weekdays: tuple[int, ...]
+    power: int
+    cutoff_soc: int
+    months: tuple[int, ...]
+
+    @property
+    def enabled(self) -> bool:
+        return self.week_enable == TOU_SLOT_ON
+
+    @property
+    def configured(self) -> bool:
+        """The slot has a schedule; unused slots are all zeros."""
+        return bool(self.weekdays) or self.start != self.end
+
+    @classmethod
+    def from_api(cls, index: int, value: dict[str, Any]) -> TouSlot:
+        def ints(key: str) -> tuple[int, ...]:
+            items = value.get(f"{key}{index}")
+            if not isinstance(items, list):
+                return ()
+            return tuple(n for item in items if (n := _int(item)) is not None)
+
+        return cls(
+            index=index,
+            start=_str(value.get(f"TOUStart{index}")) or "00:00",
+            end=_str(value.get(f"TOUEnd{index}")) or "00:00",
+            week_enable=_int(value.get(f"TOUWeekEnable{index}")) or 0,
+            weekdays=ints("TOUWeek"),
+            power=_int(value.get(f"ChargeDischargePW{index}")) or 0,
+            cutoff_soc=_int(value.get(f"ChargeCutOffSet{index}")) or 0,
+            months=ints("TOUMonth"),
+        )
+
+    def to_api(self) -> dict[str, Any]:
+        """The `data` of a `remote/set` for this slot."""
+        n = self.index
+        return {
+            f"TOUStart{n}": self.start,
+            f"TOUEnd{n}": self.end,
+            f"TOUWeekEnable{n}": self.week_enable,
+            f"ChargeDischargePW{n}": self.power,
+            f"ChargeCutOffSet{n}": self.cutoff_soc,
+            f"TOUMonth{n}": list(self.months),
+            f"TOUWeek{n}": list(self.weekdays),
+        }
+
+    def audit_log(self) -> dict[str, Any]:
+        """The `controlItemLogs` the web sends with a slot change."""
+        log: dict[str, Any] = {
+            "start_t": self.start,
+            "end_t": self.end,
+            "switch": "on" if self.enabled else "off",
+            "monthly_repetition": "、".join(
+                _MONTH_KEYS[m] for m in self.months if 0 <= m < 12
+            ),
+            "wkly_rep": "、".join(
+                _WEEKDAY_KEYS[d] for d in self.weekdays if 0 <= d < 7
+            ),
+            "cd_mod": "charge" if self.power < 0 else "discharge",
+            "import_power_soc": self.cutoff_soc,
+        }
+        percent = abs(self.power) / 10
+        log["rated_power" if self.power < 0 else "discharge_limit_pw"] = (
+            int(percent) if percent.is_integer() else percent
+        )
+        return log
+
+
+_MONTH_KEYS = (
+    "jan_1",
+    "feb_1",
+    "march_1",
+    "apr_1",
+    "may_1",
+    "june_1",
+    "july_1",
+    "aug_1",
+    "sept_1",
+    "oct_1",
+    "nov_1",
+    "dec_1",
+)
+_WEEKDAY_KEYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+
+
+@dataclass(frozen=True, slots=True)
+class InverterFeatures:
+    """Capability bits from `ARMFunction2` and `ARMFunction4`."""
+
+    arm_function_2: int
+    arm_function_4: int
+
+    @property
+    def auto_off_grid(self) -> bool:
+        return bool(self.arm_function_4 & 1)
+
+    @property
+    def peak_shaving_v5(self) -> bool:
+        return bool(self.arm_function_4 >> 5 & 1)
+
+    @property
+    def tou_power_limit_mode(self) -> bool:
+        return bool(self.arm_function_4 >> 12 & 1)
+
+    @property
+    def tou_discharge_soc(self) -> bool:
+        return bool(self.arm_function_2 >> 11 & 1)

@@ -358,3 +358,64 @@ async def test_device_details_are_paged(
     assert len(details) == 120
     assert details["SN7"].model == "GW8.3-BAT-D-G20"
     assert [c.json["current"] for c in session.calls_to("POST", url)] == [1, 2]
+
+
+async def test_remote_get(session: FakeSession, client: SemsPlusClient) -> None:
+    url = API + "/sems-remote/api/v1/remote/get"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add(
+        "POST",
+        url,
+        _ok(
+            {
+                "sn": "SN1",
+                "items": [
+                    {
+                        "functionName": "INVCurrentWorkMode",
+                        "value": {"INVCurrentWorkMode": 1},
+                    },
+                    {"functionName": "GreenModeEnable", "value": {}},
+                    {"functionName": "Broken", "value": None},
+                ],
+            }
+        ),
+    )
+
+    values = await client.async_remote_get("SN1", ["INVCurrentWorkMode", "Broken"])
+
+    assert values == {
+        "INVCurrentWorkMode": {"INVCurrentWorkMode": 1},
+        "GreenModeEnable": {},
+    }
+    assert session.calls_to("POST", url)[0].json == {
+        "functionName": ["INVCurrentWorkMode", "Broken"],
+        "sn": "SN1",
+    }
+
+
+async def test_remote_set(session: FakeSession, client: SemsPlusClient) -> None:
+    url = API + "/sems-remote/api/v1/remote/set"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add("POST", url, {"code": "00000", "description": "ok"})
+
+    await client.async_remote_set(
+        station_id=STATION,
+        sn="SN1",
+        device_name="All-in-One 1",
+        name="TOUModeEnable",
+        data={"TOUModeEnable": 1},
+        log={"TOU": "remote_Switch_on"},
+    )
+
+    (request,) = session.calls_to("POST", url)
+    assert request.json == {
+        "functionName": "TOUModeEnable",
+        "sn": "SN1",
+        "plantId": STATION,
+        "deviceName": "All-in-One 1",
+        "data": {"TOUModeEnable": 1},
+        "waitingForDevice": True,
+        "controlItemLogs": {"TOU": "remote_Switch_on"},
+        "virtualSn": "SN1",
+    }
+    assert request.timeout.total > 30

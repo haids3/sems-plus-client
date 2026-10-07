@@ -11,9 +11,11 @@ from sems_plus_client import (
     AlarmCounts,
     DeviceInformation,
     DeviceType,
+    InverterFeatures,
     PowerFlow,
     StationInfo,
     StationStatistics,
+    TouSlot,
     WorkModeInfo,
     find_control_functions,
     list_control_functions,
@@ -413,3 +415,100 @@ def test_list_control_functions_keeps_functions_sharing_an_address() -> None:
 )
 def test_device_information(rows: object, expected: DeviceInformation) -> None:
     assert DeviceInformation.from_api(rows) == expected
+
+
+ALL_MONTHS = list(range(12))
+ALL_DAYS = list(range(7))
+MONTH_LOG = (
+    "jan_1、feb_1、march_1、apr_1、may_1、june_1、"
+    "july_1、aug_1、sept_1、oct_1、nov_1、dec_1"
+)
+DAY_LOG = "sun、mon、tue、wed、thu、fri、sat"
+
+
+@pytest.mark.parametrize(
+    ("value", "log"),
+    [
+        pytest.param(
+            {
+                "TOUStart1": "12:00",
+                "TOUEnd1": "15:00",
+                "TOUWeekEnable1": 249,
+                "TOUWeek1": ALL_DAYS,
+                "ChargeDischargePW1": -1000,
+                "ChargeCutOffSet1": 100,
+                "TOUMonth1": ALL_MONTHS,
+            },
+            {
+                "start_t": "12:00",
+                "end_t": "15:00",
+                "switch": "on",
+                "monthly_repetition": MONTH_LOG,
+                "wkly_rep": DAY_LOG,
+                "cd_mod": "charge",
+                "import_power_soc": 100,
+                "rated_power": 100,
+            },
+            id="charge",
+        ),
+        pytest.param(
+            {
+                "TOUStart1": "18:00",
+                "TOUEnd1": "21:00",
+                "TOUWeekEnable1": 6,
+                "TOUWeek1": ALL_DAYS,
+                "ChargeDischargePW1": 320,
+                "ChargeCutOffSet1": 60,
+                # The web adds a thirteenth "month"; it is not logged.
+                "TOUMonth1": [*ALL_MONTHS, 12],
+            },
+            {
+                "start_t": "18:00",
+                "end_t": "21:00",
+                "switch": "off",
+                "monthly_repetition": MONTH_LOG,
+                "wkly_rep": DAY_LOG,
+                "cd_mod": "discharge",
+                "import_power_soc": 60,
+                "discharge_limit_pw": 32,
+            },
+            id="discharge-off",
+        ),
+    ],
+)
+def test_tou_slot_round_trip_and_log(
+    value: dict[str, object], log: dict[str, object]
+) -> None:
+    slot = TouSlot.from_api(1, value)
+
+    assert slot.configured
+    assert slot.to_api() == value
+    assert slot.audit_log() == log
+
+
+def test_unused_tou_slot() -> None:
+    slot = TouSlot.from_api(
+        5,
+        {
+            "TOUStart5": "00:00",
+            "TOUEnd5": "00:00",
+            "TOUWeekEnable5": 85,
+            "TOUWeek5": [],
+            "ChargeDischargePW5": 0,
+            "ChargeCutOffSet5": 0,
+            "TOUMonth5": [],
+        },
+    )
+
+    assert not slot.configured
+    assert not slot.enabled
+
+
+def test_inverter_features() -> None:
+    # Values read from an All-in-One on work-mode version 3.
+    features = InverterFeatures(arm_function_2=19474, arm_function_4=4108)
+
+    assert features.tou_discharge_soc
+    assert features.tou_power_limit_mode
+    assert not features.auto_off_grid
+    assert not features.peak_shaving_v5

@@ -540,6 +540,54 @@ class SemsPlusClient:
         )
         return WorkModeInfo.from_api(data)
 
+    async def async_remote_get(
+        self, sn: str, names: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Read named settings (`TOU1`, `INVCurrentWorkMode`, `Backup`, ...).
+
+        Returns each name's value object; a name the device lacks is missing.
+        """
+        data = await self._async_request(
+            "POST",
+            "/sems-remote/api/v1/remote/get",
+            body={"functionName": names, "sn": sn},
+        )
+        return {
+            item["functionName"]: item["value"]
+            for item in (data or {}).get("items") or []
+            if isinstance(item, dict)
+            and isinstance(item.get("functionName"), str)
+            and isinstance(item.get("value"), dict)
+        }
+
+    async def async_remote_set(
+        self,
+        *,
+        station_id: str,
+        sn: str,
+        device_name: str,
+        name: str,
+        data: dict[str, Any],
+        log: dict[str, Any],
+        virtual_sn: str | None = None,
+    ) -> None:
+        """Write one named setting and wait for the device to confirm it."""
+        await self._async_request(
+            "POST",
+            "/sems-remote/api/v1/remote/set",
+            body={
+                "functionName": name,
+                "sn": sn,
+                "plantId": station_id,
+                "deviceName": device_name,
+                "data": data,
+                "waitingForDevice": True,
+                "controlItemLogs": log,
+                "virtualSn": virtual_sn or sn,
+            },
+            write=True,
+        )
+
     async def async_get_function_values(
         self, sn: str, functions: dict[str, str]
     ) -> dict[str, float | None]:

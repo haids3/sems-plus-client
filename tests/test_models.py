@@ -512,3 +512,62 @@ def test_inverter_features() -> None:
     assert features.tou_power_limit_mode
     assert not features.auto_off_grid
     assert not features.peak_shaving_v5
+
+
+def _slot(power: int, months: tuple[int, ...] = tuple(range(12))) -> TouSlot:
+    return TouSlot(1, "18:00", "21:00", 249, tuple(range(7)), power, 60, months)
+
+
+@pytest.mark.parametrize(
+    ("slot", "charging", "export_limited", "percent"),
+    [
+        pytest.param(_slot(-1000), True, False, 100, id="charge"),
+        pytest.param(_slot(0), True, False, 0, id="zero-is-charge"),
+        pytest.param(_slot(320), False, False, 32, id="battery-limited"),
+        pytest.param(_slot(160, (*range(12), 12)), False, True, 16, id="export"),
+        # A charge slot ignores the export marker.
+        pytest.param(_slot(-500, (*range(12), 12)), True, False, 50, id="charge-12"),
+    ],
+)
+def test_tou_slot_mode(
+    slot: TouSlot, charging: bool, export_limited: bool, percent: float
+) -> None:
+    assert slot.charging is charging
+    assert slot.export_limited is export_limited
+    assert slot.power_percent == percent
+    assert slot.calendar_months == tuple(range(12))
+
+
+def test_tou_slot_changes() -> None:
+    export = _slot(160, (*range(12), 12))
+
+    to_charge = export.with_mode(charging=True)
+    assert to_charge.power == -160
+    assert to_charge.months == tuple(range(12))
+    assert to_charge.with_mode(charging=False).power == 160
+    assert export.with_mode(charging=False) is export
+
+    assert export.with_power(25.5).power == 255
+    assert to_charge.with_power(40).power == -400
+    assert to_charge.with_power(0).power == 0
+
+    battery = export.with_export_limit(False)
+    assert battery.months == tuple(range(12))
+    assert battery.with_export_limit(True).months == (*range(12), 12)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(lambda s: s.with_mode(charging=False), id="discharge-at-zero"),
+        pytest.param(lambda s: s.with_export_limit(True), id="limit-on-charge"),
+    ],
+)
+def test_tou_slot_invalid_changes_on_a_zero_charge_slot(change: object) -> None:
+    with pytest.raises(ValueError):
+        change(_slot(0))  # type: ignore[operator]
+
+
+def test_discharge_slot_needs_power() -> None:
+    with pytest.raises(ValueError):
+        _slot(320).with_power(0)

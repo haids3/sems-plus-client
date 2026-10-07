@@ -7,7 +7,7 @@ rather than raising.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
 import json
@@ -594,6 +594,9 @@ WORK_MODES: dict[int, str] = {
 # Weekday-enable word of a TOU slot.
 TOU_SLOT_ON = 249
 TOU_SLOT_OFF = 6
+# A discharge slot whose months include this one limits export power rather
+# than battery discharge power. It is not a month.
+TOU_EXPORT_LIMIT_MONTH = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,8 +604,9 @@ class TouSlot:
     """One time-of-use slot from `remote/get` (`TOU1` ... `TOU12`).
 
     `power` is per-mille of rated power on work-mode versions 2 and 3:
-    positive discharges, negative charges. `weekdays` count from 0 = Sunday,
-    `months` from 0 = January.
+    positive discharges, zero or negative charges. `weekdays` count from
+    0 = Sunday, `months` from 0 = January; a discharge slot's months may also
+    hold `TOU_EXPORT_LIMIT_MONTH`.
     """
 
     index: int
@@ -622,6 +626,49 @@ class TouSlot:
     def configured(self) -> bool:
         """The slot has a schedule; unused slots are all zeros."""
         return bool(self.weekdays) or self.start != self.end
+
+    @property
+    def charging(self) -> bool:
+        """A charge slot; the web treats zero power as charging too."""
+        return self.power <= 0
+
+    @property
+    def export_limited(self) -> bool:
+        """A discharge slot whose power limits export, not battery discharge."""
+        return not self.charging and TOU_EXPORT_LIMIT_MONTH in self.months
+
+    @property
+    def power_percent(self) -> float:
+        """Charge power from the grid, or the discharge or export limit, in %."""
+        return abs(self.power) / 10
+
+    @property
+    def calendar_months(self) -> tuple[int, ...]:
+        return tuple(m for m in self.months if 0 <= m < TOU_EXPORT_LIMIT_MONTH)
+
+    def with_mode(self, charging: bool) -> TouSlot:
+        """The slot switched to charging or discharging at the same power."""
+        if charging == self.charging:
+            return self
+        if not charging and self.power == 0:
+            raise ValueError("Set a power above 0 before switching to discharge")
+        return replace(self, power=-self.power, months=self.calendar_months)
+
+    def with_power(self, percent: float) -> TouSlot:
+        """The slot with a new power, keeping its mode."""
+        magnitude = round(abs(percent) * 10)
+        if not self.charging and magnitude == 0:
+            raise ValueError("A discharge slot needs a power above 0")
+        return replace(self, power=-magnitude if self.charging else magnitude)
+
+    def with_export_limit(self, export: bool) -> TouSlot:
+        """The discharge slot limiting export (True) or battery discharge."""
+        if self.charging:
+            raise ValueError("Only a discharge slot has a power limit method")
+        months = self.calendar_months
+        return replace(
+            self, months=(*months, TOU_EXPORT_LIMIT_MONTH) if export else months
+        )
 
     @classmethod
     def from_api(cls, index: int, value: dict[str, Any]) -> TouSlot:
@@ -662,16 +709,16 @@ class TouSlot:
             "end_t": self.end,
             "switch": "on" if self.enabled else "off",
             "monthly_repetition": "、".join(
-                _MONTH_KEYS[m] for m in self.months if 0 <= m < 12
+                _MONTH_KEYS[m] for m in self.calendar_months
             ),
             "wkly_rep": "、".join(
                 _WEEKDAY_KEYS[d] for d in self.weekdays if 0 <= d < 7
             ),
-            "cd_mod": "charge" if self.power < 0 else "discharge",
+            "cd_mod": "charge" if self.charging else "discharge",
             "import_power_soc": self.cutoff_soc,
         }
-        percent = abs(self.power) / 10
-        log["rated_power" if self.power < 0 else "discharge_limit_pw"] = (
+        percent = self.power_percent
+        log["rated_power" if self.charging else "discharge_limit_pw"] = (
             int(percent) if percent.is_integer() else percent
         )
         return log

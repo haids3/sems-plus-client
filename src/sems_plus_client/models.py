@@ -542,6 +542,13 @@ def list_control_functions(tree: Any) -> list[ControlFunction]:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveCredentials:
+    client_id: str
+    username: str
+    password: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class WorkModeInfo:
     """`get-work-mode`: which work-mode scheme the device firmware uses."""
 

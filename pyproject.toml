@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Home Automation",
     "Typing :: Typed",
 ]
-dependencies = ["aiohttp>=3.9.0"]
+dependencies = ["aiohttp>=3.9.0", "aiomqtt>=2.5.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.24"]

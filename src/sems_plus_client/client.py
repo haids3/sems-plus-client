@@ -29,6 +29,7 @@ from .models import (
     DeviceDetails,
     DeviceInformation,
     FactorValue,
+    LiveCredentials,
     PowerFlow,
     Station,
     StationInfo,
@@ -125,6 +126,12 @@ class SemsPlusClient:
     @property
     def account(self) -> str:
         return self._account
+
+    @property
+    def region(self) -> str | None:
+        """The account's region ("au", "eu", ...), known once logged in."""
+        region = self._token.get("region") if self._token else None
+        return region if isinstance(region, str) and region else None
 
     async def async_login(self) -> None:
         """Log in, replacing any current session."""
@@ -392,6 +399,29 @@ class SemsPlusClient:
             params={"deviceType": device.device_type, "pwId": station_id},
         )
         return parse_factors(data)
+
+    async def async_get_live_credentials(self) -> LiveCredentials:
+        """Broker credentials for the second-data feed (see `live`).
+
+        They are opaque and go to the broker unchanged; fetch them anew for
+        each connection.
+        """
+        data = await self._async_request("GET", "/sems-plant/api/second-data/config")
+        if not isinstance(data, dict) or not all(
+            isinstance(data.get(key), str)
+            for key in ("clientId", "userName", "password")
+        ):
+            raise SemsPlusConnectionError("SEMS+ returned no live-feed credentials")
+        return LiveCredentials(data["clientId"], data["userName"], data["password"])
+
+    async def async_live_enabled(self, station_id: str) -> bool:
+        """Whether the station pushes second data at all."""
+        data = await self._async_request(
+            "GET",
+            "/sems-plant/api/second-data/enable",
+            params={"stationId": station_id},
+        )
+        return data is True
 
     async def async_get_battery_systems(
         self, station_id: str, inverter_sn: str

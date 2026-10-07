@@ -419,3 +419,27 @@ async def test_remote_set(session: FakeSession, client: SemsPlusClient) -> None:
         "virtualSn": "SN1",
     }
     assert request.timeout.total > 30
+
+
+async def test_live_credentials(session: FakeSession, client: SemsPlusClient) -> None:
+    url = API + "/sems-plant/api/second-data/config"
+    login = {**LOGIN_OK, "data": {**LOGIN_OK["data"], "region": "au"}}
+    session.add("POST", LOGIN_URL, login)
+    session.add("GET", url, _ok({"clientId": "c", "userName": "u", "password": "p"}))
+
+    credentials = await client.async_get_live_credentials()
+
+    assert credentials.username == "u"
+    assert "'p'" not in repr(credentials)
+    assert client.region == "au"
+
+
+async def test_incomplete_live_credentials(
+    session: FakeSession, client: SemsPlusClient
+) -> None:
+    url = API + "/sems-plant/api/second-data/config"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add("GET", url, _ok({"clientId": "c"}))
+
+    with pytest.raises(SemsPlusConnectionError):
+        await client.async_get_live_credentials()

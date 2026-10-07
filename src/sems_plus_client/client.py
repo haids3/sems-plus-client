@@ -16,6 +16,7 @@ import aiohttp
 from .errors import (
     SemsPlusApiError,
     SemsPlusAuthError,
+    SemsPlusCommandError,
     SemsPlusConnectionError,
     SemsPlusPermissionError,
     SemsPlusRateLimitError,
@@ -43,6 +44,8 @@ FALLBACK_API_BASE = "https://eu-gateway.semsportal.com/web/sems"
 _SUCCESS_CODES = {"0", "00000"}
 _RATE_LIMIT_CODE = "GY0429"
 _PERMISSION_CODE = "100025"
+# The device refused or never confirmed a written value.
+_COMMAND_FAILED_CODE = "P0215"
 # A token the server no longer accepts (expired, or replaced by another login).
 _SESSION_EXPIRED_CODES = {"100002", "C0602"}
 # Login rejections that say nothing about the credentials.
@@ -51,6 +54,8 @@ _TRANSIENT_LOGIN_CODES = {"C0602"}
 _RATE_LIMIT_PAUSE = 300
 _MAX_RETRY_AFTER = 3_600
 _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+# Writes wait for the device to confirm, which has taken just over 30 s.
+_WRITE_TIMEOUT = aiohttp.ClientTimeout(total=90)
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -172,8 +177,13 @@ class SemsPlusClient:
         *,
         params: dict[str, str] | None = None,
         body: Any = None,
+        write: bool = False,
     ) -> Any:
-        """Call an authenticated endpoint and return its `data`."""
+        """Call an authenticated endpoint and return its `data`.
+
+        A `write` waits for the device, so it gets a longer timeout and does not
+        hold up the requests queued behind it.
+        """
         rejected: dict[str, Any] | None = None
         for attempt in range(2):
             token = await self._async_ensure_token(rejected)
@@ -187,7 +197,12 @@ class SemsPlusClient:
                 ),
             }
             response = await self._async_send(
-                method, token["api"] + path, headers, params=params, body=body
+                method,
+                token["api"] + path,
+                headers,
+                params=params,
+                body=body,
+                write=write,
             )
             code = str(response.get("code"))
             if code in _SUCCESS_CODES:
@@ -196,6 +211,8 @@ class SemsPlusClient:
                 raise self._pause(_RATE_LIMIT_PAUSE)
             if code == _PERMISSION_CODE:
                 raise SemsPlusPermissionError(_message(response))
+            if code == _COMMAND_FAILED_CODE:
+                raise SemsPlusCommandError(code, _message(response))
             if code in _SESSION_EXPIRED_CODES and attempt == 0:
                 _LOGGER.debug("SEMS+ session expired (code %s); logging in", code)
                 rejected = token
@@ -211,35 +228,59 @@ class SemsPlusClient:
         *,
         params: dict[str, str] | None = None,
         body: Any = None,
+        write: bool = False,
     ) -> dict[str, Any]:
         """Send one request, spaced after the previous one."""
+        if write:
+            # Only the start is spaced; the device confirmation can take 30 s.
+            async with self._request_lock:
+                await self._async_wait_turn()
+            return await self._async_fetch(
+                method, url, headers, params, body, _WRITE_TIMEOUT
+            )
         async with self._request_lock:
-            self._raise_if_paused()
-            wait = self._last_request + self._request_spacing - time.monotonic()
-            if wait > 0:
-                await asyncio.sleep(wait)
+            await self._async_wait_turn()
             try:
-                async with self._session.request(
-                    method,
-                    url,
-                    headers=headers,
-                    params=params,
-                    json=body,
-                    timeout=_REQUEST_TIMEOUT,
-                ) as response:
-                    if response.status == 429:
-                        raise self._pause(
-                            _retry_after(response.headers.get("Retry-After"))
-                        )
-                    if response.status >= 400:
-                        raise SemsPlusConnectionError(
-                            f"SEMS+ returned HTTP {response.status} for {url}"
-                        )
-                    payload = await response.json(content_type=None)
-            except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-                raise SemsPlusConnectionError(f"SEMS+ request failed: {err!r}") from err
+                return await self._async_fetch(
+                    method, url, headers, params, body, _REQUEST_TIMEOUT
+                )
             finally:
                 self._last_request = time.monotonic()
+
+    async def _async_wait_turn(self) -> None:
+        self._raise_if_paused()
+        wait = self._last_request + self._request_spacing - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._last_request = time.monotonic()
+
+    async def _async_fetch(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, str] | None,
+        body: Any,
+        timeout: aiohttp.ClientTimeout,
+    ) -> dict[str, Any]:
+        try:
+            async with self._session.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=body,
+                timeout=timeout,
+            ) as response:
+                if response.status == 429:
+                    raise self._pause(_retry_after(response.headers.get("Retry-After")))
+                if response.status >= 400:
+                    raise SemsPlusConnectionError(
+                        f"SEMS+ returned HTTP {response.status} for {url}"
+                    )
+                payload = await response.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise SemsPlusConnectionError(f"SEMS+ request failed: {err!r}") from err
         if not isinstance(payload, dict):
             raise SemsPlusConnectionError("SEMS+ returned an unexpected payload")
         return payload
@@ -457,11 +498,13 @@ class SemsPlusClient:
         values: dict[str, int],
         functions: dict[str, str],
         log: dict[str, Any],
+        virtual_sn: str | None = None,
     ) -> None:
-        """Write function values.
+        """Write function values and wait for the device to confirm them.
 
         `values` and `functions` are keyed by address; `log` is the audit entry
-        SEMS+ records alongside the change.
+        SEMS+ records alongside the change. `virtual_sn` defaults to `sn`.
+        Raises SemsPlusCommandError when the device rejects the change.
         """
         await self._async_request(
             "POST",
@@ -474,8 +517,9 @@ class SemsPlusClient:
                 "waitingForDevice": True,
                 "plantId": station_id,
                 "deviceName": device_name,
-                "virtualSn": sn,
+                "virtualSn": virtual_sn or sn,
             },
+            write=True,
         )
 
 

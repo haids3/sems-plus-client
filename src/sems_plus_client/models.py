@@ -104,6 +104,8 @@ class StationInfo:
     permissions: frozenset[str]
     # Statistics only exist from here on; see `async_get_statistics`.
     created: date | None = None
+    # The `stations/flow` fields this station has (`pSystem`, `pThird`, ...).
+    flow_items: frozenset[str] = frozenset()
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> StationInfo:
@@ -121,11 +123,25 @@ class StationInfo:
                 p for p in data.get("permissions") or [] if isinstance(p, str)
             ),
             created=_date(data.get("createTime")),
+            flow_items=_flow_items(data.get("chartMap")),
         )
 
     @property
     def can_control(self) -> bool:
+        """SEMS+ lets this account change device settings (the web's own check)."""
         return "INVERTER_REMOTE" in self.permissions
+
+    @property
+    def can_read_controls(self) -> bool:
+        return "INVERTER_REMOTE_READ" in self.permissions
+
+
+def _flow_items(chart_map: Any) -> frozenset[str]:
+    if not isinstance(chart_map, dict) or not isinstance(
+        items := chart_map.get("energy_flow"), str
+    ):
+        return frozenset()
+    return frozenset(item.strip() for item in items.split(",") if item.strip())
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +149,8 @@ class PowerFlow:
     """Live station power flow, in kW.
 
     `battery` is positive while discharging and `grid` positive while
-    importing. `load` is always a magnitude.
+    importing; SEMS+ itself reports `pGrid` positive while exporting.
+    `load` is always a magnitude. Fields a station lacks are None.
     """
 
     pv: float | None
@@ -142,17 +159,27 @@ class PowerFlow:
     load: float | None
     soc: float | None
     updated_at: str | None
+    third_party_pv: float | None = None
+    ev_charger: float | None = None
+    heat_pump: float | None = None
+    generator: float | None = None
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> PowerFlow:
+        """Parse `stations/flow` or a second-data station message."""
         load = _float(data.get("pConsum"))
+        grid = _float(data.get("pGrid"))
         return cls(
             pv=_float(data.get("pSystem", data.get("pAc"))),
             battery=_float(data.get("pBat")),
-            grid=_float(data.get("pGrid")),
+            grid=-grid if grid else grid,
             load=abs(load) if load is not None else None,
             soc=_float(data.get("soc")),
-            updated_at=_str(data.get("refreshTime")),
+            updated_at=_str(data.get("refreshTime")) or _str(data.get("time")),
+            third_party_pv=_float(data.get("pThird")),
+            ev_charger=_float(data.get("pEvChar")),
+            heat_pump=_float(data.get("pHeatPump")),
+            generator=_float(data.get("pDiesel")),
         )
 
 

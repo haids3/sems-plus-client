@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -10,6 +11,7 @@ from sems_plus_client import (
     SemsPlusApiError,
     SemsPlusAuthError,
     SemsPlusClient,
+    SemsPlusCommandError,
     SemsPlusConnectionError,
     SemsPlusPermissionError,
     SemsPlusRateLimitError,
@@ -40,7 +42,7 @@ async def test_login_encodes_password_and_uses_regional_gateway(
 
     flow = await client.async_get_power_flow(STATION)
 
-    assert flow.grid == 1.5
+    assert flow.grid == -1.5
     (login,) = session.calls_to("POST", LOGIN_URL)
     # base64(md5("secret"))
     assert login.json["pwd"] == "NWViZTIyOTRlY2QwZTBmMDhlYWI3NjkwZDJhNmVlNjk="
@@ -212,6 +214,68 @@ async def test_set_function_values_payload(
         "deviceName": "All-in-One 1",
         "virtualSn": "SN1",
     }
+    # The device confirmation can take longer than an ordinary request.
+    assert request.timeout.total > 30
+
+
+async def test_rejected_write_is_a_command_error(
+    session: FakeSession, client: SemsPlusClient
+) -> None:
+    url = API + "/sems-remote/api/v1/address/remote/setDeviceFunctionParameters"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add(
+        "POST",
+        url,
+        {"code": "P0215", "translationCode": "op_fail", "description": "failed"},
+    )
+
+    with pytest.raises(SemsPlusCommandError) as err:
+        await client.async_set_function_values(
+            station_id=STATION,
+            sn="SN1",
+            device_name="Meter 1",
+            values={"40343": 1},
+            functions={"40343": "f1"},
+            log={},
+            virtual_sn="MTR1",
+        )
+    assert err.value.code == "P0215"
+    assert session.calls_to("POST", url)[0].json["virtualSn"] == "MTR1"
+
+
+async def test_write_does_not_hold_up_reads(
+    session: FakeSession, client: SemsPlusClient
+) -> None:
+    write_url = API + "/sems-remote/api/v1/address/remote/setDeviceFunctionParameters"
+    released = asyncio.Event()
+
+    class SlowResponse(FakeResponse):
+        async def json(self, content_type: str | None = None) -> object:
+            await released.wait()
+            return _ok(None)
+
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add("POST", write_url, SlowResponse())
+    session.add("GET", FLOW_URL, _ok({"pSystem": 1}))
+    await client.async_login()
+
+    write = asyncio.create_task(
+        client.async_set_function_values(
+            station_id=STATION,
+            sn="SN1",
+            device_name="All-in-One 1",
+            values={"45218": 1},
+            functions={"45218": "f1"},
+            log={},
+        )
+    )
+    await asyncio.sleep(0)
+    flow = await asyncio.wait_for(client.async_get_power_flow(STATION), 1)
+
+    assert flow.pv == 1
+    assert not write.done()
+    released.set()
+    await write
 
 
 async def test_battery_functions_request(

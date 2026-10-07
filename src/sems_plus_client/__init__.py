@@ -4,6 +4,7 @@ from .client import SemsPlusClient
 from .errors import (
     SemsPlusApiError,
     SemsPlusAuthError,
+    SemsPlusCommandError,
     SemsPlusConnectionError,
     SemsPlusError,
     SemsPlusPermissionError,
@@ -40,6 +41,7 @@ __all__ = [
     "SemsPlusApiError",
     "SemsPlusAuthError",
     "SemsPlusClient",
+    "SemsPlusCommandError",
     "SemsPlusConnectionError",
     "SemsPlusError",
     "SemsPlusPermissionError",

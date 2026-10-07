@@ -96,6 +96,7 @@ def test_station_info_grid_status(
         "status": "1",
         "permissions": ["INVERTER_REMOTE"],
         "createTime": "2026-03-05T09:17:41.69",
+        "chartMap": {"energy_flow": "pSystem,soc, pBat,pGrid", "income": "x"},
     }
     if grid_status is not None:
         data["gridStatus"] = grid_status
@@ -105,21 +106,57 @@ def test_station_info_grid_status(
     assert info.on_grid is on_grid
     assert info.status == 1
     assert info.created == date(2026, 3, 5)
+    assert info.flow_items == {"pSystem", "soc", "pBat", "pGrid"}
     assert info.can_control
+    assert not info.can_read_controls
 
 
-def test_power_flow_load_is_a_magnitude() -> None:
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        pytest.param(
+            {"pSystem": 0.03, "pBat": -4.97, "pGrid": -8.99, "pConsum": 4.05},
+            (0.03, -4.97, 8.99, 4.05, None),
+            id="importing",
+        ),
+        pytest.param(
+            {"pSystem": 4.4, "pBat": 0, "pGrid": 3.6, "pConsum": -0.8, "soc": 100},
+            (4.4, 0, -3.6, 0.8, 100),
+            id="exporting",
+        ),
+        pytest.param(
+            {"pSystem": 1, "pBat": 0.5, "pGrid": 0, "pConsum": 1.5, "soc": 50},
+            (1, 0.5, 0, 1.5, 50),
+            id="idle-grid",
+        ),
+    ],
+)
+def test_power_flow_signs(data: dict[str, float], expected: tuple[float, ...]) -> None:
+    flow = PowerFlow.from_api(data)
+
+    assert (flow.pv, flow.battery, flow.grid, flow.load, flow.soc) == expected
+    assert str(flow.grid) != "-0.0"
+
+
+def test_power_flow_from_second_data_message() -> None:
     flow = PowerFlow.from_api(
-        {"pSystem": 2, "pBat": -0.5, "pGrid": -1, "pConsum": -0.5, "soc": 80}
+        {
+            "stationId": "S1",
+            "time": "2026-10-08 09:52:45",
+            "pSystem": "5.931",
+            "pConsum": "1.007",
+            "pBat": "0.0",
+            "pGrid": "4.924",
+            "soc": "100.0",
+            "pThird": "0.5",
+        }
     )
 
-    assert (flow.pv, flow.battery, flow.grid, flow.load, flow.soc) == (
-        2,
-        -0.5,
-        -1,
-        0.5,
-        80,
-    )
+    assert flow.pv == 5.931
+    assert flow.grid == -4.924
+    assert flow.third_party_pv == 0.5
+    assert flow.ev_charger is None
+    assert flow.updated_at == "2026-10-08 09:52:45"
 
 
 def test_statistics_series_and_totals() -> None:

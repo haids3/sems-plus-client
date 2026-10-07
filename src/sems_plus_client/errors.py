@@ -25,6 +25,10 @@ class SemsPlusApiError(SemsPlusError):
         self.code = code
 
 
+class SemsPlusCommandError(SemsPlusApiError):
+    """The device rejected a written value, or never confirmed it."""
+
+
 class SemsPlusRateLimitError(SemsPlusError):
     """The API asked us to slow down; no request is sent until the pause ends."""
 

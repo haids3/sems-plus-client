@@ -34,6 +34,7 @@ class Call:
     headers: dict[str, str]
     params: dict[str, str] | None
     json: Any
+    timeout: Any = None
 
 
 class FakeSession:
@@ -58,7 +59,7 @@ class FakeSession:
         json: Any = None,
         timeout: Any = None,
     ) -> FakeResponse:
-        self.calls.append(Call(method, url, headers, params, json))
+        self.calls.append(Call(method, url, headers, params, json, timeout))
         queue = self._responses.get((method, url))
         if not queue:
             raise AssertionError(f"Unexpected request: {method} {url}")

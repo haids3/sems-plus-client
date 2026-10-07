@@ -31,6 +31,7 @@ from .models import (
     Station,
     StationInfo,
     StationStatistics,
+    WorkModeInfo,
     parse_devices,
     parse_factors,
 )
@@ -462,17 +463,49 @@ class SemsPlusClient:
         These are not part of the control tree; `battery_index` is a battery
         system's `index` from `async_get_battery_systems`.
         """
+        return await self.async_get_general_functions(sn, 1, battery_index)
+
+    async def async_get_general_functions(
+        self, sn: str, menu_code: int, battery_index: str = ""
+    ) -> dict[str, Any]:
+        """The quick settings the device page shows (`GENERAL_FUNCTIONS`).
+
+        A curated subset of the control tree: start/stop, export limit, work
+        modes and the like. `menu_code` comes from `MENU_CODES`; a meter is
+        addressed through its inverter (`async_get_related_sn`).
+        """
         data = await self._async_request(
             "POST",
             "/sems-remote/api/v2/address/remote/getDeviceFunctionTabMenus",
             body={
                 "batIndex": battery_index,
-                "menuCode": 1,
+                "menuCode": menu_code,
                 "module": "GENERAL_FUNCTIONS",
                 "sn": sn,
             },
         )
         return data if isinstance(data, dict) else {}
+
+    async def async_get_related_sn(self, sn: str, menu_code: int) -> str:
+        """The serial a device's controls are addressed by.
+
+        A smart meter resolves to its inverter; most devices to themselves.
+        """
+        data = await self._async_request(
+            "POST",
+            "/sems-remote/api/v2/address/remote/get-related-sn",
+            body={"sn": sn, "menuCode": menu_code},
+        )
+        related = (data or {}).get("sn")
+        return related if isinstance(related, str) and related else sn
+
+    async def async_get_work_mode(self, sn: str) -> WorkModeInfo:
+        data = await self._async_request(
+            "GET",
+            "/sems-remote/api/v2/address/remote/get-work-mode",
+            params={"sn": sn},
+        )
+        return WorkModeInfo.from_api(data)
 
     async def async_get_function_values(
         self, sn: str, functions: dict[str, str]

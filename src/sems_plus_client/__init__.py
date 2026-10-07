@@ -12,10 +12,12 @@ from .errors import (
 )
 from .models import (
     INVERTER_TYPES,
+    MENU_CODES,
     Alarm,
     AlarmCounts,
     BatterySystem,
     ControlFunction,
+    ControlType,
     Device,
     DeviceType,
     FactorValue,
@@ -23,17 +25,21 @@ from .models import (
     Station,
     StationInfo,
     StationStatistics,
+    WorkModeInfo,
     find_control_functions,
+    list_control_functions,
     parse_devices,
     parse_factors,
 )
 
 __all__ = [
     "INVERTER_TYPES",
+    "MENU_CODES",
     "Alarm",
     "AlarmCounts",
     "BatterySystem",
     "ControlFunction",
+    "ControlType",
     "Device",
     "DeviceType",
     "FactorValue",
@@ -49,7 +55,9 @@ __all__ = [
     "Station",
     "StationInfo",
     "StationStatistics",
+    "WorkModeInfo",
     "find_control_functions",
+    "list_control_functions",
     "parse_devices",
     "parse_factors",
 ]

@@ -7,7 +7,6 @@ rather than raising.
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import StrEnum
@@ -63,6 +62,22 @@ class DeviceType(StrEnum):
 
 # Device types whose telemetry carries inverter data and that can be controlled.
 INVERTER_TYPES = frozenset({DeviceType.INVERTER, DeviceType.ALL_IN_ONE})
+
+# The `menuCode` the remote-control endpoints want for each device type.
+MENU_CODES: dict[str, int] = {
+    "INVERTER": 0,
+    "ENERGY_STORAGE_INTEGRATED_CABINET": 0,
+    "PCS": 0,
+    "MICRO_INVERTER": 0,
+    "BAT_SYS": 1,
+    "SMART_METER": 2,
+    "DONGLE": 3,
+    "EV_CHARGER": 4,
+    "SWITCH_CAB": 5,
+    "DATA_LOGGER": 6,
+    "BAT_BUSBAR": 8,
+    "DIESEL_GEN": 9,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,9 +371,20 @@ class Alarm:
         )
 
 
+class ControlType:
+    """Known values of a function's `control` field (the web's widget)."""
+
+    NUMBER = 3
+    SELECT = 4
+    SWITCH = 8
+    COMMAND = 16
+    TIME_RANGE = 24
+    BITMASK = 25
+
+
 @dataclass(frozen=True, slots=True)
 class ControlFunction:
-    """One remote-control function from a device's control tree."""
+    """One remote-control function from a device's control menus."""
 
     address: str
     id: str
@@ -369,13 +395,36 @@ class ControlFunction:
     gain: float | None
     value_range: str | None
     options: list[dict[str, Any]] = field(default_factory=list)
+    # Stable English identifier, e.g. "PWLimitEnable"; most functions lack one.
+    func_key: str | None = None
+    # translateKeys of the menus above the function, outermost first.
+    path: tuple[str, ...] = ()
 
     @property
     def writable(self) -> bool:
         return "W" in self.rw
 
+    @property
+    def bounds(self) -> tuple[float, float] | None:
+        """The first `[min,max]` of `value_range`, as raw values."""
+        try:
+            numbers = json.loads(f"[{self.value_range}]")[0]
+            low, high = float(numbers[0]), float(numbers[-1])
+        except (TypeError, ValueError, IndexError, KeyError):
+            return None
+        return low, high
+
+    def option_value(self, trans_key: str) -> int | None:
+        """The value of the `controlAttr` option with this transKey."""
+        for option in self.options:
+            if isinstance(option, dict) and option.get("transKey") == trans_key:
+                return _int(option.get("value"))
+        return None
+
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> ControlFunction:
+    def from_api(
+        cls, data: dict[str, Any], path: tuple[str, ...] = ()
+    ) -> ControlFunction:
         try:
             options = json.loads(data.get("controlAttr") or "[]")
         except ValueError:
@@ -390,6 +439,8 @@ class ControlFunction:
             gain=_float(data.get("gain")),
             value_range=_str(data.get("range")),
             options=options if isinstance(options, list) else [],
+            func_key=_str(data.get("funcKey")),
+            path=path,
         )
 
 
@@ -402,16 +453,60 @@ def find_control_functions(
     functions carry an address and id.
     """
     found: dict[str, ControlFunction] = {}
-    pending: deque[Any] = deque([tree])
-    while pending:
-        node = pending.popleft()
-        if isinstance(node, list):
-            pending.extend(node)
-            continue
-        if not isinstance(node, dict):
-            continue
-        key = node.get("translateKey")
-        if key in keys and key not in found and node.get("address") and node.get("id"):
-            found[key] = ControlFunction.from_api(node)
-        pending.extend(v for v in node.values() if isinstance(v, dict | list))
+    for function in list_control_functions(tree):
+        if function.key in keys and function.key not in found:
+            found[function.key] = function
     return found
+
+
+def list_control_functions(tree: Any) -> list[ControlFunction]:
+    """Every function in a control tree or menu response, in menu order.
+
+    Accepts `getTopTreeByCode` and `getDeviceFunctionTabMenus` responses
+    alike. Each function keeps the translateKeys of the menus above it, which
+    tell apart functions sharing a key (two `limit_setting`s, one in W and one
+    in %).
+    """
+    functions: list[ControlFunction] = []
+    seen: set[str] = set()
+
+    def walk(node: Any, path: tuple[str, ...]) -> None:
+        if isinstance(node, list):
+            for child in node:
+                walk(child, path)
+            return
+        if not isinstance(node, dict):
+            return
+        if node.get("address") and node.get("id") and node.get("translateKey"):
+            # Functions can share an address (immediate charge and stop
+            # charging do), so only a repeated id is a duplicate.
+            if (function_id := str(node["id"])) not in seen:
+                seen.add(function_id)
+                functions.append(ControlFunction.from_api(node, path))
+            return
+        menu_key = node.get("translateKey")
+        inner = path + (menu_key,) if isinstance(menu_key, str) and menu_key else path
+        for key, value in node.items():
+            if key == "functionMenus":
+                walk(value, path)
+            elif isinstance(value, dict | list):
+                walk(value, inner)
+
+    walk(tree, ())
+    return functions
+
+
+@dataclass(frozen=True, slots=True)
+class WorkModeInfo:
+    """`get-work-mode`: which work-mode scheme the device firmware uses."""
+
+    # "1.0", "2.0" or "3.0"; see the API notes on work modes.
+    version: str | None
+    arm_version: str | None
+
+    @classmethod
+    def from_api(cls, data: Any) -> WorkModeInfo:
+        data = data if isinstance(data, dict) else {}
+        return cls(
+            version=_str(data.get("workMode")), arm_version=_str(data.get("arm"))
+        )

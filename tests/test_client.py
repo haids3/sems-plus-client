@@ -295,3 +295,50 @@ async def test_battery_functions_request(
         "module": "GENERAL_FUNCTIONS",
         "sn": "SN1",
     }
+
+
+async def test_general_functions_request(
+    session: FakeSession, client: SemsPlusClient
+) -> None:
+    url = API + "/sems-remote/api/v2/address/remote/getDeviceFunctionTabMenus"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add("POST", url, _ok({"functionMenus": {"children": []}}))
+
+    await client.async_get_general_functions("SN1", 0)
+
+    (request,) = session.calls_to("POST", url)
+    assert request.json == {
+        "batIndex": "",
+        "menuCode": 0,
+        "module": "GENERAL_FUNCTIONS",
+        "sn": "SN1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        pytest.param({"sn": "INV1"}, "INV1", id="meter-to-inverter"),
+        pytest.param(None, "MTR1", id="unresolved"),
+    ],
+)
+async def test_related_sn(
+    session: FakeSession, client: SemsPlusClient, data: object, expected: str
+) -> None:
+    url = API + "/sems-remote/api/v2/address/remote/get-related-sn"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add("POST", url, _ok(data))
+
+    assert await client.async_get_related_sn("MTR1", 2) == expected
+    assert session.calls_to("POST", url)[0].json == {"sn": "MTR1", "menuCode": 2}
+
+
+async def test_work_mode_request(session: FakeSession, client: SemsPlusClient) -> None:
+    url = API + "/sems-remote/api/v2/address/remote/get-work-mode"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add("GET", url, _ok({"workMode": "2.0", "arm": "425"}))
+
+    info = await client.async_get_work_mode("SN1")
+
+    assert info.version == "2.0"
+    assert session.calls_to("GET", url)[0].params == {"sn": "SN1"}

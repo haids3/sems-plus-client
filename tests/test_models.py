@@ -13,7 +13,9 @@ from sems_plus_client import (
     PowerFlow,
     StationInfo,
     StationStatistics,
+    WorkModeInfo,
     find_control_functions,
+    list_control_functions,
     parse_devices,
     parse_factors,
 )
@@ -240,3 +242,145 @@ def test_find_control_functions_skips_menus() -> None:
     run_stop = functions["run_stop"]
     assert (run_stop.address, run_stop.id, run_stop.writable) == ("45218", "f1", True)
     assert run_stop.options == [{"transKey": "remote_Switch_on", "value": "1"}]
+
+
+GENERAL_FUNCTIONS = {
+    "sn": "INV1",
+    "functionMenus": {
+        "children": [
+            {
+                "translateKey": "device_start_stop",
+                "children": [],
+                "functions": [
+                    {
+                        "address": "45218",
+                        "id": "f-run",
+                        "translateKey": "run_stop",
+                        "control": 8,
+                        "rwType": "RW",
+                        "range": "[0,1]",
+                        "gain": 1,
+                        "controlAttr": '[{"transKey":"remote_Switch_on","value":"1"},'
+                        '{"transKey":"remote_Switch_off","value":"0"}]',
+                    },
+                    {
+                        "address": "45221",
+                        "id": "f-restart",
+                        "translateKey": "restart",
+                        "funcKey": "Restart",
+                        "control": 16,
+                        "rwType": "WO",
+                        "range": "[361]",
+                        "gain": 1,
+                        "controlAttr": '[{"transKey":"restart","value":"361"}]',
+                    },
+                ],
+            },
+            {
+                "translateKey": "grid-tie_power_limit",
+                "children": [],
+                "functions": [
+                    {
+                        "address": "47510",
+                        "id": "f-limit",
+                        "translateKey": "limit_setting",
+                        "funcKey": "PWLimitThr",
+                        "control": 3,
+                        "rwType": "RW",
+                        "range": "[0,30000]",
+                        "gain": 1,
+                        "unit": "W",
+                    },
+                    {
+                        "address": "42004",
+                        "id": "f-parallel",
+                        "translateKey": "restric_set_parallel",
+                        "funcKey": "PWLimitThr",
+                        "control": 3,
+                        "rwType": "RW",
+                        "range": "[0,1000000]",
+                        "gain": 1,
+                        "unit": "W",
+                    },
+                ],
+            },
+            {
+                "translateKey": "work_mode",
+                "children": [
+                    {
+                        "translateKey": "tou_mode",
+                        "children": [
+                            {
+                                "translateKey": "work_group_1",
+                                "functions": [
+                                    {
+                                        "address": "47559",
+                                        "id": "f-start",
+                                        "translateKey": "start_t",
+                                        "control": 24,
+                                        "rwType": "RW",
+                                        "range": "[0,23],[0,59]",
+                                        "relationFuncs": [
+                                            {
+                                                "address": "47560",
+                                                "id": "f-end",
+                                                "translateKey": "end_t",
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+    },
+}
+
+
+def test_list_control_functions_keeps_menu_paths() -> None:
+    functions = list_control_functions(GENERAL_FUNCTIONS)
+
+    assert [f.address for f in functions] == [
+        "45218",
+        "45221",
+        "47510",
+        "42004",
+        "47559",
+    ]
+    by_address = {f.address: f for f in functions}
+    assert by_address["47510"].path == ("grid-tie_power_limit",)
+    assert by_address["47559"].path == ("work_mode", "tou_mode", "work_group_1")
+    # Two functions share a funcKey; only the key and menu tell them apart.
+    assert by_address["42004"].func_key == by_address["47510"].func_key
+    assert by_address["47510"].bounds == (0, 30000)
+    assert by_address["47559"].bounds == (0, 23)
+    assert by_address["45221"].option_value("restart") == 361
+    assert by_address["45218"].option_value("remote_Switch_off") == 0
+    assert by_address["45218"].option_value("missing") is None
+    assert find_control_functions(GENERAL_FUNCTIONS, {"run_stop"})["run_stop"].id == (
+        "f-run"
+    )
+
+
+def test_work_mode_info() -> None:
+    assert WorkModeInfo.from_api({"workMode": "3.0", "arm": "745"}) == WorkModeInfo(
+        "3.0", "745"
+    )
+    assert WorkModeInfo.from_api(None) == WorkModeInfo(None, None)
+
+
+def test_list_control_functions_keeps_functions_sharing_an_address() -> None:
+    menus = {
+        "functions": [
+            {"address": "47545", "id": "f-on", "translateKey": "immediate_charge"},
+            {"address": "47545", "id": "f-off", "translateKey": "stop_charging"},
+            {"address": "47545", "id": "f-on", "translateKey": "immediate_charge"},
+        ]
+    }
+
+    assert [f.key for f in list_control_functions(menus)] == [
+        "immediate_charge",
+        "stop_charging",
+    ]

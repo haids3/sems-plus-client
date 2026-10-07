@@ -26,6 +26,8 @@ from .models import (
     AlarmCounts,
     BatterySystem,
     Device,
+    DeviceDetails,
+    DeviceInformation,
     FactorValue,
     PowerFlow,
     Station,
@@ -337,6 +339,37 @@ class SemsPlusClient:
             params={"stationId": station_id},
         )
         return parse_devices(data or {})
+
+    async def async_get_device_details(
+        self, station_id: str
+    ) -> dict[str, DeviceDetails]:
+        """Every device's model and brand, keyed by serial."""
+        details: dict[str, DeviceDetails] = {}
+        page = 1
+        while True:
+            data = await self._async_request(
+                "POST",
+                "/sems-plant/api/web/device/station/page",
+                body={"stationId": station_id, "current": page, "size": 100},
+            )
+            rows = (data or {}).get("dataList") or []
+            for row in rows:
+                if isinstance(row, dict) and isinstance(row.get("sn"), str):
+                    details[row["sn"]] = DeviceDetails.from_api(row)
+            total = (data or {}).get("total") or 0
+            if not rows or len(details) >= total:
+                return details
+            page += 1
+
+    async def async_get_device_information(
+        self, station_id: str, device: Device
+    ) -> DeviceInformation:
+        data = await self._async_request(
+            "GET",
+            f"/sems-plant/api/equipments/{device.sn}/information",
+            params={"deviceType": device.device_type, "pwId": station_id},
+        )
+        return DeviceInformation.from_api(data)
 
     async def async_get_telemetry(
         self, station_id: str, device: Device

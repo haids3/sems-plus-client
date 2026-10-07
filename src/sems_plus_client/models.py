@@ -241,6 +241,51 @@ def parse_devices(data: dict[str, Any]) -> list[Device]:
     return devices
 
 
+@dataclass(frozen=True, slots=True)
+class DeviceDetails:
+    """Product details of a device, from the station's device page."""
+
+    sn: str
+    model: str | None
+    brand: str | None
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> DeviceDetails:
+        return cls(
+            sn=data["sn"],
+            model=_str(data.get("model")),
+            brand=_str(data.get("brand")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceInformation:
+    """A device's `information` panel: model and firmware versions."""
+
+    model: str | None
+    # The inverter's firmware (SEMS+ calls it the safety version) or the
+    # dongle's communication module version.
+    firmware: str | None
+    rated_power_kw: float | None
+    # A dongle's link: "LAN" or "WiFi".
+    connection: str | None
+
+    @classmethod
+    def from_api(cls, data: Any) -> DeviceInformation:
+        fields = {
+            row["code"]: row.get("data")
+            for row in data or []
+            if isinstance(row, dict) and isinstance(row.get("code"), str)
+        }
+        return cls(
+            model=_str(fields.get("modelType")),
+            firmware=_str(fields.get("safetyVersion"))
+            or _str(fields.get("commModuleVer")),
+            rated_power_kw=_float(fields.get("ratedPower")),
+            connection=_str(fields.get("communicationMode")),
+        )
+
+
 type FactorValue = float | str | None
 
 

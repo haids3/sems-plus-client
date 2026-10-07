@@ -9,6 +9,7 @@ import pytest
 from sems_plus_client import (
     Alarm,
     AlarmCounts,
+    DeviceInformation,
     DeviceType,
     PowerFlow,
     StationInfo,
@@ -384,3 +385,31 @@ def test_list_control_functions_keeps_functions_sharing_an_address() -> None:
         "immediate_charge",
         "stop_charging",
     ]
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        pytest.param(
+            [
+                {"code": "modelType", "data": "GW10K-EHA-G20"},
+                {"code": "safetyVersion", "data": "010101"},
+                {"code": "ratedPower", "data": "9.999"},
+                {"code": "remark", "dataType": "STRING"},
+            ],
+            DeviceInformation("GW10K-EHA-G20", "010101", 9.999, None),
+            id="inverter",
+        ),
+        pytest.param(
+            [
+                {"code": "communicationMode", "data": "LAN"},
+                {"code": "commModuleVer", "data": "V2.7.64"},
+            ],
+            DeviceInformation(None, "V2.7.64", None, "LAN"),
+            id="dongle",
+        ),
+        pytest.param(None, DeviceInformation(None, None, None, None), id="empty"),
+    ],
+)
+def test_device_information(rows: object, expected: DeviceInformation) -> None:
+    assert DeviceInformation.from_api(rows) == expected

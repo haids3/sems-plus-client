@@ -342,3 +342,19 @@ async def test_work_mode_request(session: FakeSession, client: SemsPlusClient) -
 
     assert info.version == "2.0"
     assert session.calls_to("GET", url)[0].params == {"sn": "SN1"}
+
+
+async def test_device_details_are_paged(
+    session: FakeSession, client: SemsPlusClient
+) -> None:
+    url = API + "/sems-plant/api/web/device/station/page"
+    rows = [{"sn": f"SN{i}", "model": "GW8.3-BAT-D-G20"} for i in range(120)]
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add("POST", url, _ok({"dataList": rows[:100], "total": 120}))
+    session.add("POST", url, _ok({"dataList": rows[100:], "total": 120}))
+
+    details = await client.async_get_device_details(STATION)
+
+    assert len(details) == 120
+    assert details["SN7"].model == "GW8.3-BAT-D-G20"
+    assert [c.json["current"] for c in session.calls_to("POST", url)] == [1, 2]

@@ -30,6 +30,7 @@ from .models import (
     DeviceInformation,
     FactorValue,
     FirmwareUpdate,
+    ForceUpgradeStatus,
     LiveCredentials,
     PowerFlow,
     Station,
@@ -391,6 +392,17 @@ class SemsPlusClient:
         return [
             FirmwareUpdate.from_api(row) for row in data or [] if isinstance(row, dict)
         ]
+
+    async def async_get_force_upgrade(
+        self, station_id: str, sn: str
+    ) -> ForceUpgradeStatus:
+        """Whether a forced upgrade waits for, or is running on, a device."""
+        data = await self._async_request(
+            "POST",
+            "/sems-remote/api/v1/firmware-management/exist-force-upgrade",
+            body={"plantId": station_id, "sn": sn},
+        )
+        return ForceUpgradeStatus.from_api(data)
 
     async def async_get_telemetry(
         self, station_id: str, device: Device

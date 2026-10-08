@@ -478,3 +478,29 @@ async def test_firmware_updates(session: FakeSession, client: SemsPlusClient) ->
         "plantId": STATION,
         "deviceSn": "SN1",
     }
+
+
+async def test_force_upgrade(session: FakeSession, client: SemsPlusClient) -> None:
+    url = API + "/sems-remote/api/v1/firmware-management/exist-force-upgrade"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add(
+        "POST",
+        url,
+        _ok(
+            {
+                "existForceUpgrade": True,
+                "existUpgrading": False,
+                "canOwnerForceUpgrade": True,
+                "taskGroupIds": [],
+            }
+        ),
+    )
+
+    status = await client.async_get_force_upgrade(STATION, "SN1")
+
+    assert (status.forced, status.upgrading, status.owner_can_apply) == (
+        True,
+        False,
+        True,
+    )
+    assert session.calls_to("POST", url)[0].json == {"plantId": STATION, "sn": "SN1"}

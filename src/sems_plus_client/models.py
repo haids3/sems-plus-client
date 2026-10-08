@@ -150,6 +150,11 @@ class StationInfo:
     def can_read_controls(self) -> bool:
         return "INVERTER_REMOTE_READ" in self.permissions
 
+    @property
+    def can_upgrade_firmware(self) -> bool:
+        """The installer route to firmware upgrades (the web's own check)."""
+        return "FIRMWARE_UPGRADE" in self.permissions
+
 
 def _flow_items(chart_map: Any) -> frozenset[str]:
     if not isinstance(chart_map, dict) or not isinstance(
@@ -306,6 +311,26 @@ class FirmwareUpdate:
             name=_str(data.get("verName")),
             released=_epoch_ms(data.get("releaseTs")),
             status=_str(data.get("status")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ForceUpgradeStatus:
+    """`exist-force-upgrade`: forced firmware and whether an upgrade runs."""
+
+    # GoodWe has marked a waiting release as one that must be installed.
+    forced: bool
+    upgrading: bool
+    # The owner route: an owner may apply the forced release themselves.
+    owner_can_apply: bool
+
+    @classmethod
+    def from_api(cls, data: Any) -> ForceUpgradeStatus:
+        data = data if isinstance(data, dict) else {}
+        return cls(
+            forced=data.get("existForceUpgrade") is True,
+            upgrading=data.get("existUpgrading") is True,
+            owner_can_apply=data.get("canOwnerForceUpgrade") is True,
         )
 
 

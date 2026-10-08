@@ -114,6 +114,7 @@ def test_station_info_grid_status(
     assert info.flow_items == {"pSystem", "soc", "pBat", "pGrid"}
     assert info.can_control
     assert not info.can_read_controls
+    assert not info.can_upgrade_firmware
 
 
 @pytest.mark.parametrize(

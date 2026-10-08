@@ -575,6 +575,28 @@ class SemsPlusClient:
         )
         return data if isinstance(data, dict) else {}
 
+    async def async_get_visible_work_modes(
+        self, sn: str, menu_code: int
+    ) -> frozenset[str]:
+        """The work modes the web offers for this device, by funcKey.
+
+        e.g. `backupMode`, `TOUMode`, `offGridMode`, `peakShaveMode`,
+        `delayMode`; hidden ones (often `greenMode`) are left out.
+        """
+        data = await self._async_request(
+            "POST",
+            "/sems-remote/api/v2/address/remote/getDeviceFunctionTabMenus",
+            body={"sn": sn, "module": "WORK_MODE", "menuCode": menu_code},
+        )
+        menus = ((data or {}).get("functionMenus") or {}).get("children") or []
+        return frozenset(
+            menu["funcKey"]
+            for menu in menus
+            if isinstance(menu, dict)
+            and menu.get("visible") == 0
+            and isinstance(menu.get("funcKey"), str)
+        )
+
     async def async_get_related_sn(self, sn: str, menu_code: int) -> str:
         """The serial a device's controls are addressed by.
 

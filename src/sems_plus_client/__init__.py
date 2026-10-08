@@ -12,8 +12,12 @@ from .errors import (
 )
 from .live import LiveMessage, SemsPlusLiveFeed, parse_live_message
 from .models import (
+    DELAYED_CHARGE_OFF,
+    DELAYED_CHARGE_ON,
     INVERTER_TYPES,
     MENU_CODES,
+    PEAK_SHAVING_OFF,
+    PEAK_SHAVING_ON,
     TOU_EXPORT_LIMIT_MONTH,
     TOU_SLOT_OFF,
     TOU_SLOT_ON,
@@ -23,6 +27,7 @@ from .models import (
     BatterySystem,
     ControlFunction,
     ControlType,
+    DemandSlot,
     Device,
     DeviceDetails,
     DeviceInformation,
@@ -38,6 +43,7 @@ from .models import (
     StationStatistics,
     TouSlot,
     WorkModeInfo,
+    assign_demand_slots,
     find_control_functions,
     list_control_functions,
     parse_devices,
@@ -45,8 +51,12 @@ from .models import (
 )
 
 __all__ = [
+    "DELAYED_CHARGE_OFF",
+    "DELAYED_CHARGE_ON",
     "INVERTER_TYPES",
     "MENU_CODES",
+    "PEAK_SHAVING_OFF",
+    "PEAK_SHAVING_ON",
     "TOU_EXPORT_LIMIT_MONTH",
     "TOU_SLOT_OFF",
     "TOU_SLOT_ON",
@@ -56,6 +66,7 @@ __all__ = [
     "BatterySystem",
     "ControlFunction",
     "ControlType",
+    "DemandSlot",
     "Device",
     "DeviceDetails",
     "DeviceInformation",
@@ -81,6 +92,7 @@ __all__ = [
     "StationStatistics",
     "TouSlot",
     "WorkModeInfo",
+    "assign_demand_slots",
     "find_control_functions",
     "list_control_functions",
     "parse_devices",

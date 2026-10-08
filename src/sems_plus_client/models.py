@@ -811,3 +811,134 @@ class InverterFeatures:
     @property
     def tou_discharge_soc(self) -> bool:
         return bool(self.arm_function_2 >> 11 & 1)
+
+
+# Week-enable codes of the two DemandOrDelayed settings. Peak shaving and
+# delayed charge share them; the code says which mode a setting holds.
+PEAK_SHAVING_ON = 252
+PEAK_SHAVING_OFF = 3
+DELAYED_CHARGE_ON = 250
+DELAYED_CHARGE_OFF = 5
+# A setting that has never been used.
+_DEMAND_UNSET = 85
+_PEAK_CODES = frozenset({PEAK_SHAVING_ON, PEAK_SHAVING_OFF})
+_DELAY_CODES = frozenset({DELAYED_CHARGE_ON, DELAYED_CHARGE_OFF})
+
+
+@dataclass(frozen=True, slots=True)
+class DemandSlot:
+    """`DemandOrDelayed1` or `2`: the settings of peak shaving or delayed charge.
+
+    `power_limit` is the peak-shaving import limit in kW, or for delayed
+    charge the export limit in per-mille of rated power. `charge_priority` 0
+    means PV charges the battery first (delayed charge only).
+    """
+
+    index: int
+    start: str
+    end: str
+    week_enable: int
+    weekdays: tuple[int, ...]
+    power_limit: float
+    soc: int
+    months: tuple[int, ...]
+    charge_priority: int
+
+    @property
+    def name(self) -> str:
+        return f"DemandOrDelayed{self.index}"
+
+    @classmethod
+    def from_api(cls, index: int, value: dict[str, Any]) -> DemandSlot:
+        def ints(key: str) -> tuple[int, ...]:
+            items = value.get(f"{key}{index}")
+            if not isinstance(items, list):
+                return ()
+            return tuple(n for item in items if (n := _int(item)) is not None)
+
+        return cls(
+            index=index,
+            start=_str(value.get(f"DemandOrDelayedStart{index}")) or "00:00",
+            end=_str(value.get(f"DemandOrDelayedEnd{index}")) or "00:00",
+            week_enable=_int(value.get(f"DemandOrDelayedWeekEnable{index}")) or 0,
+            weekdays=ints("DemandOrDelayedWeek"),
+            power_limit=_float(value.get(f"DemandOrDelayedPowerLimit{index}")) or 0.0,
+            soc=_int(value.get(f"DemandOrDelayedSOC{index}")) or 0,
+            months=ints("DemandOrDelayedMonth"),
+            charge_priority=_int(value.get(f"DemandOrDelayedChargePriority{index}"))
+            or 0,
+        )
+
+    def _key(self, field_name: str) -> str:
+        return f"DemandOrDelayed{field_name}{self.index}"
+
+    def toggle_data(self, on: bool, *, peak_shaving: bool) -> dict[str, Any]:
+        """The `remote/set` data that switches this setting's mode on or off."""
+        if peak_shaving:
+            code = PEAK_SHAVING_ON if on else PEAK_SHAVING_OFF
+        else:
+            code = DELAYED_CHARGE_ON if on else DELAYED_CHARGE_OFF
+        # A setting with no days would never run.
+        return {
+            self._key("WeekEnable"): code,
+            self._key("Week"): list(self.weekdays or range(7)),
+        }
+
+    def peak_shaving_data(self) -> dict[str, Any]:
+        """What the web's peak-shaving editor writes for this setting."""
+        return {
+            self._key("Start"): self.start,
+            self._key("End"): self.end,
+            self._key("SOC"): self.soc,
+            self._key("PowerLimit"): self.power_limit,
+            self._key("Week"): list(range(7)),
+            self._key("WeekEnable"): PEAK_SHAVING_OFF
+            if self.week_enable == _DEMAND_UNSET
+            else self.week_enable,
+        }
+
+    def peak_shaving_log(self) -> dict[str, Any]:
+        return {
+            "peak_shaving_soc": self.soc,
+            "import_pw_peaklimit": self.power_limit,
+            "start_t": self.start,
+            "end_t": self.end,
+        }
+
+    def delayed_charge_data(self) -> dict[str, Any]:
+        """What the web's delayed-charge editor writes for this setting."""
+        return {
+            self._key("End"): self.end,
+            self._key("PowerLimit"): self.power_limit,
+            self._key("Month"): list(self.months),
+            self._key("ChargePriority"): self.charge_priority,
+            self._key("WeekEnable"): DELAYED_CHARGE_OFF
+            if self.week_enable == _DEMAND_UNSET
+            else self.week_enable,
+            self._key("Week"): list(range(7)),
+        }
+
+    def delayed_charge_log(self) -> dict[str, Any]:
+        # The web's own mapping, kept as it is.
+        priority = (
+            "charge_battery_first" if self.charge_priority else "export_grid_first"
+        )
+        return {
+            "peak_power_sales_limit": self.power_limit,
+            "pv_prioritize_battery_charge": priority,
+            "end_t": self.end,
+            "month": "、".join(
+                _MONTH_KEYS[m] for m in self.months if 0 <= m < len(_MONTH_KEYS)
+            ),
+        }
+
+
+def assign_demand_slots(
+    first: DemandSlot, second: DemandSlot
+) -> tuple[DemandSlot, DemandSlot]:
+    """Which setting holds peak shaving and which delayed charge, as the web decides."""
+    if first.week_enable in _PEAK_CODES or second.week_enable in _DELAY_CODES:
+        return first, second
+    if first.week_enable in _DELAY_CODES or second.week_enable in _PEAK_CODES:
+        return second, first
+    return first, second

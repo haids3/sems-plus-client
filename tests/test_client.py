@@ -504,3 +504,33 @@ async def test_force_upgrade(session: FakeSession, client: SemsPlusClient) -> No
         True,
     )
     assert session.calls_to("POST", url)[0].json == {"plantId": STATION, "sn": "SN1"}
+
+
+async def test_visible_work_modes(session: FakeSession, client: SemsPlusClient) -> None:
+    url = API + "/sems-remote/api/v2/address/remote/getDeviceFunctionTabMenus"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add(
+        "POST",
+        url,
+        _ok(
+            {
+                "functionMenus": {
+                    "children": [
+                        {"funcKey": "backupMode", "visible": 0},
+                        {"funcKey": "greenMode", "visible": 1},
+                        {"funcKey": "peakShaveMode", "visible": 0},
+                        {"visible": 0},
+                    ]
+                }
+            }
+        ),
+    )
+
+    modes = await client.async_get_visible_work_modes("SN1", 0)
+
+    assert modes == {"backupMode", "peakShaveMode"}
+    assert session.calls_to("POST", url)[0].json == {
+        "sn": "SN1",
+        "module": "WORK_MODE",
+        "menuCode": 0,
+    }

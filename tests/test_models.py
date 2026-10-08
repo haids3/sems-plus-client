@@ -9,6 +9,7 @@ import pytest
 from sems_plus_client import (
     Alarm,
     AlarmCounts,
+    DemandSlot,
     DeviceInformation,
     DeviceType,
     InverterFeatures,
@@ -17,6 +18,7 @@ from sems_plus_client import (
     StationStatistics,
     TouSlot,
     WorkModeInfo,
+    assign_demand_slots,
     find_control_functions,
     list_control_functions,
     parse_devices,
@@ -572,3 +574,89 @@ def test_tou_slot_invalid_changes_on_a_zero_charge_slot(change: object) -> None:
 def test_discharge_slot_needs_power() -> None:
     with pytest.raises(ValueError):
         _slot(320).with_power(0)
+
+
+def _demand(index: int, week_enable: int, **values: object) -> DemandSlot:
+    base = {
+        f"DemandOrDelayedStart{index}": "00:00",
+        f"DemandOrDelayedEnd{index}": "00:00",
+        f"DemandOrDelayedWeekEnable{index}": week_enable,
+        f"DemandOrDelayedWeek{index}": [],
+        f"DemandOrDelayedPowerLimit{index}": 0,
+        f"DemandOrDelayedSOC{index}": 0,
+        f"DemandOrDelayedMonth{index}": [],
+        f"DemandOrDelayedChargePriority{index}": 0,
+    }
+    base.update(
+        {f"DemandOrDelayed{key}{index}": value for key, value in values.items()}
+    )
+    return DemandSlot.from_api(index, base)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "peak_index"),
+    [
+        pytest.param(0, 0, 1, id="unused"),
+        pytest.param(252, 0, 1, id="first-is-peak"),
+        pytest.param(0, 250, 1, id="second-is-delay"),
+        pytest.param(5, 0, 2, id="first-is-delay"),
+        pytest.param(0, 3, 2, id="second-is-peak"),
+    ],
+)
+def test_assign_demand_slots(first: int, second: int, peak_index: int) -> None:
+    peak, delay = assign_demand_slots(_demand(1, first), _demand(2, second))
+
+    assert peak.index == peak_index
+    assert delay.index == 3 - peak_index
+
+
+def test_demand_slot_toggle_fills_days() -> None:
+    slot = _demand(2, 0, Week=[1, 2])
+
+    assert slot.toggle_data(True, peak_shaving=True) == {
+        "DemandOrDelayedWeekEnable2": 252,
+        "DemandOrDelayedWeek2": [1, 2],
+    }
+    assert _demand(1, 0).toggle_data(False, peak_shaving=False) == {
+        "DemandOrDelayedWeekEnable1": 5,
+        "DemandOrDelayedWeek1": list(range(7)),
+    }
+
+
+def test_peak_shaving_editor_payload() -> None:
+    slot = _demand(1, 85, Start="17:00", End="21:00", SOC=40, PowerLimit=3.5)
+
+    assert slot.peak_shaving_data() == {
+        "DemandOrDelayedStart1": "17:00",
+        "DemandOrDelayedEnd1": "21:00",
+        "DemandOrDelayedSOC1": 40,
+        "DemandOrDelayedPowerLimit1": 3.5,
+        "DemandOrDelayedWeek1": list(range(7)),
+        # A never-used setting is stored as "off" the first time it is saved.
+        "DemandOrDelayedWeekEnable1": 3,
+    }
+    assert slot.peak_shaving_log() == {
+        "peak_shaving_soc": 40,
+        "import_pw_peaklimit": 3.5,
+        "start_t": "17:00",
+        "end_t": "21:00",
+    }
+
+
+def test_delayed_charge_editor_payload() -> None:
+    slot = _demand(2, 250, End="10:00", PowerLimit=300, Month=[0, 1], ChargePriority=0)
+
+    assert slot.delayed_charge_data() == {
+        "DemandOrDelayedEnd2": "10:00",
+        "DemandOrDelayedPowerLimit2": 300,
+        "DemandOrDelayedMonth2": [0, 1],
+        "DemandOrDelayedChargePriority2": 0,
+        "DemandOrDelayedWeekEnable2": 250,
+        "DemandOrDelayedWeek2": list(range(7)),
+    }
+    assert slot.delayed_charge_log() == {
+        "peak_power_sales_limit": 300,
+        "pv_prioritize_battery_charge": "export_grid_first",
+        "end_t": "10:00",
+        "month": "jan_1、feb_1",
+    }

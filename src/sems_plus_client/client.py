@@ -29,6 +29,7 @@ from .models import (
     DeviceDetails,
     DeviceInformation,
     FactorValue,
+    FirmwareUpdate,
     LiveCredentials,
     PowerFlow,
     Station,
@@ -377,6 +378,19 @@ class SemsPlusClient:
             params={"deviceType": device.device_type, "pwId": station_id},
         )
         return DeviceInformation.from_api(data)
+
+    async def async_get_firmware_updates(
+        self, station_id: str, sn: str
+    ) -> list[FirmwareUpdate]:
+        """Firmware releases waiting for a device; empty when it is up to date."""
+        data = await self._async_request(
+            "POST",
+            "/sems-remote/api/v1/firmware-management/device-upgrade-list",
+            body={"plantId": station_id, "deviceSn": sn},
+        )
+        return [
+            FirmwareUpdate.from_api(row) for row in data or [] if isinstance(row, dict)
+        ]
 
     async def async_get_telemetry(
         self, station_id: str, device: Device

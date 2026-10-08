@@ -443,3 +443,38 @@ async def test_incomplete_live_credentials(
 
     with pytest.raises(SemsPlusConnectionError):
         await client.async_get_live_credentials()
+
+
+async def test_firmware_updates(session: FakeSession, client: SemsPlusClient) -> None:
+    url = API + "/sems-remote/api/v1/firmware-management/device-upgrade-list"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add(
+        "POST",
+        url,
+        _ok(
+            [
+                {
+                    "verType": "DCDC",
+                    "ver": "08",
+                    "verName": "DCDC 08 release",
+                    "releaseTs": "1787190553837",
+                    "status": "new_firmware_detected",
+                },
+                "junk",
+            ]
+        ),
+    )
+
+    (update,) = await client.async_get_firmware_updates(STATION, "SN1")
+
+    assert (update.component, update.version, update.status) == (
+        "DCDC",
+        "08",
+        "new_firmware_detected",
+    )
+    assert update.released is not None
+    assert update.released.year == 2026
+    assert session.calls_to("POST", url)[0].json == {
+        "plantId": STATION,
+        "deviceSn": "SN1",
+    }

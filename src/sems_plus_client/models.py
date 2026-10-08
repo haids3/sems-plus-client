@@ -286,6 +286,29 @@ class DeviceInformation:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FirmwareUpdate:
+    """A firmware release SEMS+ offers for one component of a device."""
+
+    # The component: "DSP", "ARM", "DCDC", "Data Logger", ...
+    component: str
+    version: str
+    name: str | None
+    released: datetime | None
+    # e.g. "new_firmware_detected"
+    status: str | None
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> FirmwareUpdate:
+        return cls(
+            component=_str(data.get("verType")) or "firmware",
+            version=_str(data.get("ver")) or "unknown",
+            name=_str(data.get("verName")),
+            released=_epoch_ms(data.get("releaseTs")),
+            status=_str(data.get("status")),
+        )
+
+
 type FactorValue = float | str | None
 
 

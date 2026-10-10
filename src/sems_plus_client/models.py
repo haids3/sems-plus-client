@@ -642,6 +642,9 @@ WORK_MODES: dict[int, str] = {
 # Weekday-enable word of a TOU slot.
 TOU_SLOT_ON = 249
 TOU_SLOT_OFF = 6
+# Work-mode version 1 writes these, and reads either pair.
+_V1_TOU_SLOT_ON = 255
+_V1_TOU_SLOT_OFF = 0
 # A discharge slot whose months include this one limits export power rather
 # than battery discharge power. It is not a month.
 TOU_EXPORT_LIMIT_MONTH = 12
@@ -655,6 +658,9 @@ class TouSlot:
     positive discharges, zero or negative charges. `weekdays` count from
     0 = Sunday, `months` from 0 = January; a discharge slot's months may also
     hold `TOU_EXPORT_LIMIT_MONTH`.
+
+    With `v1` (work-mode version 1) `power` is a whole percentage, and the
+    slot has no months and no cutoff SOC: the web neither shows nor sends them.
     """
 
     index: int
@@ -665,15 +671,25 @@ class TouSlot:
     power: int
     cutoff_soc: int
     months: tuple[int, ...]
+    v1: bool = False
 
     @property
     def enabled(self) -> bool:
+        if self.v1:
+            return self.week_enable in (_V1_TOU_SLOT_ON, TOU_SLOT_ON)
         return self.week_enable == TOU_SLOT_ON
 
     @property
     def configured(self) -> bool:
         """The slot has a schedule; unused slots are all zeros."""
+        if self.v1:
+            # The web lists a version 1 slot without days as unused.
+            return bool(self.weekdays)
         return bool(self.weekdays) or self.start != self.end
+
+    @property
+    def _scale(self) -> int:
+        return 1 if self.v1 else 10
 
     @property
     def charging(self) -> bool:
@@ -688,11 +704,19 @@ class TouSlot:
     @property
     def power_percent(self) -> float:
         """Charge power from the grid, or the discharge or export limit, in %."""
-        return abs(self.power) / 10
+        return abs(self.power) / self._scale
 
     @property
     def calendar_months(self) -> tuple[int, ...]:
         return tuple(m for m in self.months if 0 <= m < TOU_EXPORT_LIMIT_MONTH)
+
+    def with_enabled(self, on: bool) -> TouSlot:
+        """The slot switched on or off, with the code its version writes."""
+        if self.v1:
+            return replace(
+                self, week_enable=_V1_TOU_SLOT_ON if on else _V1_TOU_SLOT_OFF
+            )
+        return replace(self, week_enable=TOU_SLOT_ON if on else TOU_SLOT_OFF)
 
     def with_mode(self, charging: bool) -> TouSlot:
         """The slot switched to charging or discharging at the same power."""
@@ -704,13 +728,15 @@ class TouSlot:
 
     def with_power(self, percent: float) -> TouSlot:
         """The slot with a new power, keeping its mode."""
-        magnitude = round(abs(percent) * 10)
+        magnitude = round(abs(percent) * self._scale)
         if not self.charging and magnitude == 0:
             raise ValueError("A discharge slot needs a power above 0")
         return replace(self, power=-magnitude if self.charging else magnitude)
 
     def with_export_limit(self, export: bool) -> TouSlot:
         """The discharge slot limiting export (True) or battery discharge."""
+        if self.v1:
+            raise ValueError("Work-mode version 1 has no power limit method")
         if self.charging:
             raise ValueError("Only a discharge slot has a power limit method")
         months = self.calendar_months
@@ -719,7 +745,9 @@ class TouSlot:
         )
 
     @classmethod
-    def from_api(cls, index: int, value: dict[str, Any]) -> TouSlot:
+    def from_api(
+        cls, index: int, value: dict[str, Any], *, v1: bool = False
+    ) -> TouSlot:
         def ints(key: str) -> tuple[int, ...]:
             items = value.get(f"{key}{index}")
             if not isinstance(items, list):
@@ -735,12 +763,13 @@ class TouSlot:
             power=_int(value.get(f"ChargeDischargePW{index}")) or 0,
             cutoff_soc=_int(value.get(f"ChargeCutOffSet{index}")) or 0,
             months=ints("TOUMonth"),
+            v1=v1,
         )
 
     def to_api(self) -> dict[str, Any]:
         """The `data` of a `remote/set` for this slot."""
         n = self.index
-        return {
+        data: dict[str, Any] = {
             f"TOUStart{n}": self.start,
             f"TOUEnd{n}": self.end,
             f"TOUWeekEnable{n}": self.week_enable,
@@ -749,6 +778,9 @@ class TouSlot:
             f"TOUMonth{n}": list(self.months),
             f"TOUWeek{n}": list(self.weekdays),
         }
+        if self.v1:
+            del data[f"ChargeCutOffSet{n}"], data[f"TOUMonth{n}"]
+        return data
 
     def audit_log(self) -> dict[str, Any]:
         """The `controlItemLogs` the web sends with a slot change."""
@@ -765,6 +797,8 @@ class TouSlot:
             "cd_mod": "charge" if self.charging else "discharge",
             "import_power_soc": self.cutoff_soc,
         }
+        if self.v1:
+            del log["monthly_repetition"], log["import_power_soc"]
         percent = self.power_percent
         log["rated_power" if self.charging else "discharge_limit_pw"] = (
             int(percent) if percent.is_integer() else percent

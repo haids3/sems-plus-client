@@ -660,3 +660,70 @@ def test_delayed_charge_editor_payload() -> None:
         "end_t": "10:00",
         "month": "jan_1、feb_1",
     }
+
+
+def _v1_value(week_enable: int, power: int) -> dict[str, object]:
+    return {
+        "TOUStart2": "01:00",
+        "TOUEnd2": "05:00",
+        "TOUWeekEnable2": week_enable,
+        "TOUWeek2": [1, 2, 3, 4, 5],
+        "ChargeDischargePW2": power,
+        # Version 1 has neither; whatever the read returns is not written back.
+        "ChargeCutOffSet2": 90,
+        "TOUMonth2": [0, 1],
+    }
+
+
+@pytest.mark.parametrize(
+    ("week_enable", "enabled"),
+    [
+        pytest.param(255, True, id="on"),
+        pytest.param(249, True, id="on-249"),
+        pytest.param(0, False, id="off"),
+        pytest.param(6, False, id="off-6"),
+    ],
+)
+def test_v1_tou_slot_enabled(week_enable: int, enabled: bool) -> None:
+    assert TouSlot.from_api(2, _v1_value(week_enable, -80), v1=True).enabled is enabled
+
+
+def test_v1_tou_slot_write_and_log() -> None:
+    slot = TouSlot.from_api(2, _v1_value(0, -80), v1=True)
+
+    assert slot.configured
+    assert slot.charging
+    assert slot.power_percent == 80
+    slot = slot.with_enabled(True).with_power(45)
+    assert slot.to_api() == {
+        "TOUStart2": "01:00",
+        "TOUEnd2": "05:00",
+        "TOUWeekEnable2": 255,
+        "ChargeDischargePW2": -45,
+        "TOUWeek2": [1, 2, 3, 4, 5],
+    }
+    assert slot.audit_log() == {
+        "start_t": "01:00",
+        "end_t": "05:00",
+        "switch": "on",
+        "wkly_rep": "mon、tue、wed、thu、fri",
+        "cd_mod": "charge",
+        "rated_power": 45,
+    }
+    assert slot.with_enabled(False).week_enable == 0
+
+
+def test_v1_tou_slot_without_days_is_unused() -> None:
+    value = _v1_value(0, 0) | {"TOUWeek2": []}
+
+    assert not TouSlot.from_api(2, value, v1=True).configured
+
+
+def test_v1_tou_slot_has_no_limit_method() -> None:
+    with pytest.raises(ValueError):
+        TouSlot.from_api(2, _v1_value(255, 30), v1=True).with_export_limit(True)
+
+
+def test_tou_slot_enable_codes() -> None:
+    assert _slot(320).with_enabled(False).week_enable == 6
+    assert _slot(320).with_enabled(True).week_enable == 249

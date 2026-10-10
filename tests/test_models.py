@@ -400,10 +400,16 @@ def test_list_control_functions_keeps_functions_sharing_an_address() -> None:
                 {"code": "modelType", "data": "GW10K-EHA-G20"},
                 {"code": "safetyVersion", "data": "010101"},
                 {"code": "ratedPower", "data": "9.999"},
+                {"code": "gridConnStu", "data": "1"},
                 {"code": "remark", "dataType": "STRING"},
             ],
-            DeviceInformation("GW10K-EHA-G20", "010101", 9.999, None),
+            DeviceInformation("GW10K-EHA-G20", "010101", 9.999, None, on_grid=True),
             id="inverter",
+        ),
+        pytest.param(
+            [{"code": "gridConnStu", "data": "2"}],
+            DeviceInformation(None, None, None, None, on_grid=False),
+            id="off-grid",
         ),
         pytest.param(
             [

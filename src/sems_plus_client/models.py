@@ -274,6 +274,9 @@ class DeviceInformation:
     rated_power_kw: float | None
     # A dongle's link: "LAN" or "WiFi".
     connection: str | None
+    # Whether an inverter is connected to the grid (`gridConnStu`: "1" on,
+    # "0" or "2" off, as the web shows it); None if not reported.
+    on_grid: bool | None = None
 
     @classmethod
     def from_api(cls, data: Any) -> DeviceInformation:
@@ -282,12 +285,14 @@ class DeviceInformation:
             for row in data or []
             if isinstance(row, dict) and isinstance(row.get("code"), str)
         }
+        grid = _str(fields.get("gridConnStu"))
         return cls(
             model=_str(fields.get("modelType")),
             firmware=_str(fields.get("safetyVersion"))
             or _str(fields.get("commModuleVer")),
             rated_power_kw=_float(fields.get("ratedPower")),
             connection=_str(fields.get("communicationMode")),
+            on_grid=None if grid is None else grid == "1",
         )
 
 

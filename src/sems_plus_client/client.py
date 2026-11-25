@@ -60,6 +60,9 @@ _TRANSIENT_LOGIN_CODES = {"C0602"}
 _RATE_LIMIT_PAUSE = 300
 _MAX_RETRY_AFTER = 3_600
 _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+# /telecounting rejects a request without exactly one `groups` value; one that
+# names no single group (`telecounting_today`, ...) returns every group.
+_ALL_COUNTER_GROUPS = "telecounting_total"
 # Writes wait for the device to confirm, which has taken just over 30 s.
 _WRITE_TIMEOUT = aiohttp.ClientTimeout(total=90)
 
@@ -414,15 +417,17 @@ class SemsPlusClient:
         self, station_id: str, device: Device
     ) -> dict[str, FactorValue]:
         """Energy counters, keyed by factor code (`proPvStatsToday`, ...)."""
-        return await self._async_get_factors("telecounting", station_id, device)
+        return await self._async_get_factors(
+            "telecounting", station_id, device, groups=_ALL_COUNTER_GROUPS
+        )
 
     async def _async_get_factors(
-        self, kind: str, station_id: str, device: Device
+        self, kind: str, station_id: str, device: Device, **extra: str
     ) -> dict[str, FactorValue]:
         data = await self._async_request(
             "GET",
             f"/sems-plant/api/equipments/{device.sn}/{kind}",
-            params={"deviceType": device.device_type, "pwId": station_id},
+            params={"deviceType": device.device_type, "pwId": station_id, **extra},
         )
         return parse_factors(data)
 

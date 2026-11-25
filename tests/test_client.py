@@ -8,6 +8,7 @@ import json
 import pytest
 
 from sems_plus_client import (
+    Device,
     SemsPlusApiError,
     SemsPlusAuthError,
     SemsPlusClient,
@@ -533,4 +534,50 @@ async def test_visible_work_modes(session: FakeSession, client: SemsPlusClient) 
         "sn": "SN1",
         "module": "WORK_MODE",
         "menuCode": 0,
+    }
+
+
+def _counter_group(code: str, *factors: tuple[str, str]) -> dict:
+    return {
+        "code": code,
+        "factors": [
+            {"code": c, "data": d, "dataType": "NUMERIC", "unit": "kWh"}
+            for c, d in factors
+        ],
+    }
+
+
+async def test_counters_request_one_group_and_get_all(
+    session: FakeSession, client: SemsPlusClient
+) -> None:
+    url = API + "/sems-plant/api/equipments/AIO1/telecounting"
+    session.add("POST", LOGIN_URL, LOGIN_OK)
+    session.add(
+        "GET",
+        url,
+        _ok(
+            [
+                _counter_group("telecounting_real", ("ratedPower", "9.999")),
+                _counter_group("telecounting_today", ("proPvStatsToday", "0")),
+                _counter_group("telecounting_week", ("proPvStatsWeek", "177.5")),
+                _counter_group("telecounting_lifetime", ("proPvStatsTotal", "9527.7")),
+            ]
+        ),
+    )
+
+    counters = await client.async_get_counters(
+        STATION, Device("AIO1", "All-in-One 1", "ENERGY_STORAGE_INTEGRATED_CABINET", 5)
+    )
+
+    assert counters == {
+        "ratedPower": 9.999,
+        "proPvStatsToday": 0.0,
+        "proPvStatsWeek": 177.5,
+        "proPvStatsTotal": 9527.7,
+    }
+    # SEMS+ answers A0400 without exactly one `groups` value.
+    assert session.calls_to("GET", url)[0].params == {
+        "deviceType": "ENERGY_STORAGE_INTEGRATED_CABINET",
+        "pwId": STATION,
+        "groups": "telecounting_total",
     }
